@@ -53,7 +53,7 @@ func (o *PrepareCommitMsgOptions) PrepareMessage() error {
 	if getEnvOrDefaultBool("GIT_COMMIT_MSG_PREFIX_WITH_BRANCH_NAME", false) {
 		excludedBranches := getEnvOrDefaultStringSlice("GIT_COMMIT_MSG_PREFIX_WITH_BRANCH_NAME_EXCLUSIONS", "master", "main", "dev", "develop")
 		branchTemplate := getEnvOrDefaultString("GIT_COMMIT_MSG_PREFIX_WITH_BRANCH_NAME_TEMPLATE", "[%s]")
-		currentBranch, err := execAndCaptureOutput("get current branch", "git", "branch", "--show-current")
+		currentBranch, err := determineCurrentBranch()
 		if err != nil {
 			debugf("#v\n", err)
 		} else if !stringInSlice(excludedBranches, currentBranch) {
@@ -78,7 +78,35 @@ func (o *PrepareCommitMsgOptions) PrepareMessage() error {
 	return nil
 }
 
+func determineCurrentBranch() (string, error) {
+	currentBranch, err := execAndCaptureOutput("get current branch", "git", "branch", "--show-current")
+	if err != nil {
+		return "", err
+	}
+	if currentBranch != "" {
+		return currentBranch, nil
+	}
+
+	branchList, err := execAndCaptureOutput("list branches", "git", "branch", "--list")
+	if err != nil {
+		return "", err
+	}
+	// * (no branch, rebasing feature/super-awesome-4)
+	re := regexp.MustCompile("\\* \\(no branch, rebasing ([^)]+)\\)")
+	match := re.FindStringSubmatch(branchList)
+	if len(match) > 1 {
+		return match[1], nil
+	}
+
+	return "", fmt.Errorf("could not find the current branch")
+}
+
 func prependBranchName(msg []byte, template string, branch string) []byte {
+	if branch == "" {
+		debugf("branch is empty, nothing to do")
+		return msg // nothing to do
+	}
+
 	debugf("testing message '%s' for '%s' [%v]\n", string(msg), branch, strings.HasPrefix(string(msg), branch))
 	prefix := fmt.Sprintf(template, branch)
 	prefixB := []byte(prefix)
