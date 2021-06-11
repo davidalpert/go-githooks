@@ -129,7 +129,7 @@ func appendCoauthorMarkup(b []byte, coauthors string) []byte {
 			gitMessage := bytes.TrimSpace(cleanedB[0:commentPos])
 			gitComments := cleanedB[commentPos:]
 			debugf("injecting \n%s\n in between \n%s\n and \n%s\n", coauthors, string(gitMessage), string(gitComments))
-			return bytes.Join([][]byte{gitMessage, empty, coauthorsB, empty, gitComments}, nl)
+			return bytes.Join([][]byte{gitMessage, nl, nl, coauthorsB, nl, gitComments}, nl)
 		}
 		debugf("appending \n%s\n to \n%s\n", coauthors, string(cleanedB))
 		return bytes.Join([][]byte{cleanedB, coauthorsB}, nl)
