@@ -35,6 +35,11 @@ test:
 deploy: build
 	$(if $(shell which ./deploy.sh),./deploy.sh,$(error "./deploy.sh not found"))
 
+## deploy-local: deploy binaries locally (for testing)
+.PHONY: deploy-local
+deploy-local: build
+	$(if $(shell which ./deploy-local.sh),./deploy-local.sh,$(error "./deploy-local.sh not found"))
+
 .PHONY: help
 help: Makefile
 	@echo

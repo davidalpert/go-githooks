@@ -48,8 +48,11 @@ func NewOptions(logCtx *log.Entry) *PrepareCommitMsgOptions {
 	if logCtx == nil {
 		logCtx = log.WithFields(log.Fields{})
 	}
+
 	return &PrepareCommitMsgOptions{
 		Log: logCtx,
+		LogFile: getEnvOrDefaultString("GIT_COMMIT_MSG_LOG_FILE", fmt.Sprintf("%s.log", os.Args[0])),
+		LogMinimumLevel: log.MustParseLevel(getEnvOrDefaultString("GIT_COMMIT_MSG_LOG_LEVEL", "error")),
 	}
 }
 
@@ -71,9 +74,6 @@ func (o *PrepareCommitMsgOptions) Prepare(args []string) error {
 	o.PrefixWithBranch = getEnvOrDefaultBool("GIT_COMMIT_MSG_PREFIX_WITH_BRANCH_NAME", false)
 	o.PrefixWithBranchExclusions = getEnvOrDefaultStringSlice("GIT_COMMIT_MSG_PREFIX_WITH_BRANCH_NAME_EXCLUSIONS", "master", "main", "dev", "develop")
 	o.PrefixWithBranchTemplate = getEnvOrDefaultString("GIT_COMMIT_MSG_PREFIX_WITH_BRANCH_NAME_TEMPLATE", "[%s]")
-
-	o.LogFile = getEnvOrDefaultString("GIT_COMMIT_MSG_LOG_FILE", "prepare-commit-msg.log")
-	o.LogMinimumLevel = log.MustParseLevel(getEnvOrDefaultString("GIT_COMMIT_MSG_LOG_LEVEL", "error"))
 
 	o.Log = o.Log.WithFields(log.Fields{
 		"commit.type": o.CommitType,
@@ -190,11 +190,6 @@ func main() {
 	//argsWithProg := os.Args
 	argsWithoutProg := os.Args[1:]
 
-	if len(argsWithoutProg) == 1 && strings.EqualFold(argsWithoutProg[0], "version") {
-		printVersion()
-		return
-	}
-
 	ctx := log.WithFields(log.Fields{
 		"app":         "go-prepare-commit-msg",
 		"app_version": Version,
@@ -202,6 +197,7 @@ func main() {
 	o := NewOptions(ctx)
 
 	if o.LogFile != "" {
+		//fmt.Printf("logging to: %s\n", o.LogFile)
 		f, err := os.OpenFile(o.LogFile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 		if err != nil {
 			log.Fatalf("error opening file: %v", err)
@@ -209,9 +205,15 @@ func main() {
 		defer f.Close()
 		log.SetHandler(text.New(f))
 	} else {
+		//fmt.Printf("logging to stdout\n")
 		log.SetHandler(cli.New(os.Stdout))
 	}
 	log.SetLevel(o.LogMinimumLevel)
+
+	if len(argsWithoutProg) == 1 && strings.EqualFold(argsWithoutProg[0], "version") {
+		printVersion()
+		return
+	}
 
 	if err := o.Prepare(argsWithoutProg); err != nil {
 		log.WithError(err).Error("prepare options")
