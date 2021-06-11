@@ -3,12 +3,19 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"github.com/apex/log"
+	"github.com/apex/log/handlers/cli"
+	"github.com/apex/log/handlers/text"
 	"io/ioutil"
 	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
+)
+
+var (
+	Version = "n/a"
 )
 
 /*
@@ -23,16 +30,31 @@ import (
  * information.
  */
 type PrepareCommitMsgOptions struct {
+	// positional args provided by git
 	CommitMessageFile string
 	CommitType        string
 	CommitSHA         string
+
+	// these are configuration options, set through env vars
+	PrefixWithBranch           bool
+	PrefixWithBranchExclusions []string
+	PrefixWithBranchTemplate   string
+	LogMinimumLevel            log.Level
+	LogFile                    string
+	Log                        *log.Entry
 }
 
-var (
-	Version = "n/a"
-)
+func NewOptions(logCtx *log.Entry) *PrepareCommitMsgOptions {
+	if logCtx == nil {
+		logCtx = log.WithFields(log.Fields{})
+	}
+	return &PrepareCommitMsgOptions{
+		Log: logCtx,
+	}
+}
 
-func (o *PrepareCommitMsgOptions) Parse(args []string) error {
+func (o *PrepareCommitMsgOptions) Prepare(args []string) error {
+	// parse positional args
 	numArgs := len(args)
 	if !(2 <= numArgs && numArgs <= 3) {
 		return fmt.Errorf("expected 'version' or 2 args or 3 args, got %d: %v", numArgs, args)
@@ -41,14 +63,27 @@ func (o *PrepareCommitMsgOptions) Parse(args []string) error {
 	o.CommitMessageFile = args[0]
 	o.CommitType = args[1]
 
-	if numArgs > 2  {
+	if numArgs > 2 {
 		o.CommitSHA = args[2]
 	}
+
+	// import config options from environment
+	o.PrefixWithBranch = getEnvOrDefaultBool("GIT_COMMIT_MSG_PREFIX_WITH_BRANCH_NAME", false)
+	o.PrefixWithBranchExclusions = getEnvOrDefaultStringSlice("GIT_COMMIT_MSG_PREFIX_WITH_BRANCH_NAME_EXCLUSIONS", "master", "main", "dev", "develop")
+	o.PrefixWithBranchTemplate = getEnvOrDefaultString("GIT_COMMIT_MSG_PREFIX_WITH_BRANCH_NAME_TEMPLATE", "[%s]")
+
+	o.LogFile = getEnvOrDefaultString("GIT_COMMIT_MSG_LOG_FILE", "prepare-commit-msg.log")
+	o.LogMinimumLevel = log.MustParseLevel(getEnvOrDefaultString("GIT_COMMIT_MSG_LOG_LEVEL", "error"))
+
+	o.Log = o.Log.WithFields(log.Fields{
+		"commit.type": o.CommitType,
+		"commit.sha": o.CommitSHA,
+	})
 
 	return nil
 }
 
-func (o *PrepareCommitMsgOptions) PrepareMessage() error {
+func (o *PrepareCommitMsgOptions) Execute() error {
 	msg, err := ioutil.ReadFile(o.CommitMessageFile)
 	if err != nil {
 		return fmt.Errorf("could not read '%s': %v", o.CommitMessageFile, err)
@@ -59,19 +94,17 @@ func (o *PrepareCommitMsgOptions) PrepareMessage() error {
 		branchTemplate := getEnvOrDefaultString("GIT_COMMIT_MSG_PREFIX_WITH_BRANCH_NAME_TEMPLATE", "[%s]")
 		currentBranch, err := determineCurrentBranch()
 		if err != nil {
-			debugf("#v\n", err)
+			o.Log.WithError(err).Debug("cannot find current branch")
 		} else if !stringInSlice(excludedBranches, currentBranch) {
-			debugf("adding branch prefix [%s]\n", currentBranch)
-			msg = prependBranchName(msg, branchTemplate, currentBranch)
+			msg = o.prependBranchName(msg, branchTemplate, currentBranch)
 		}
 	}
 
 	coauthorMarkup, err := execAndCaptureOutput("list mob coauthors", "git", "mob-print")
 	if err != nil {
-		debugf("%v\n", err)
+		o.Log.WithError(err).Debug("could not list the mob")
 	} else if coauthorMarkup != "" {
-		debugf("adding coauthors\n")
-		msg = appendCoauthorMarkup(msg, coauthorMarkup)
+		msg = o.appendCoauthorMarkup(msg, coauthorMarkup)
 	}
 
 	err = os.WriteFile(o.CommitMessageFile, msg, os.ModePerm)
@@ -105,60 +138,91 @@ func determineCurrentBranch() (string, error) {
 	return "", fmt.Errorf("could not find the current branch")
 }
 
-func prependBranchName(msg []byte, template string, branch string) []byte {
+func (o *PrepareCommitMsgOptions) prependBranchName(msg []byte, template string, branch string) []byte {
+	o.Log.WithField("branch", branch).Debug("adding branch prefix")
 	if branch == "" {
-		debugf("branch is empty, nothing to do")
+		log.Debug("branch is empty, nothing to do")
 		return msg // nothing to do
 	}
 
-	debugf("testing message '%s' for '%s' [%v]\n", string(msg), branch, strings.HasPrefix(string(msg), branch))
 	prefix := fmt.Sprintf(template, branch)
 	prefixB := []byte(prefix)
 	trimmedB := bytes.TrimSpace(msg)
 	if !bytes.HasPrefix(trimmedB, prefixB) {
-		debugf("prepending message with '%s'\n", prefix)
+		o.Log.WithFields(log.Fields{
+			"prefix": prefix,
+		}).Debug("prepending message")
 		return bytes.Join([][]byte{prefixB, trimmedB}, []byte(" "))
 	}
 	return msg
 }
 
-func appendCoauthorMarkup(b []byte, coauthors string) []byte {
+func (o *PrepareCommitMsgOptions) appendCoauthorMarkup(b []byte, coauthors string) []byte {
 	re := regexp.MustCompile(`(?im)^co-authored-by: [^>]+>`)
 	empty := []byte("")
 	nl := []byte("\n")
 	cleanedB := bytes.TrimSpace(re.ReplaceAll(b, empty))
 	coauthorsB := bytes.TrimSpace([]byte(coauthors))
-	if coauthors != "" {
-		if commentPos := strings.Index(string(cleanedB), "# "); commentPos > -1 {
-			gitMessage := bytes.TrimSpace(cleanedB[0:commentPos])
-			gitComments := cleanedB[commentPos:]
-			debugf("injecting \n%s\n in between \n%s\n and \n%s\n", coauthors, string(gitMessage), string(gitComments))
-			return bytes.Join([][]byte{gitMessage, nl, nl, coauthorsB, nl, gitComments}, nl)
-		}
-		debugf("appending \n%s\n to \n%s\n", coauthors, string(cleanedB))
-		return bytes.Join([][]byte{cleanedB, coauthorsB}, nl)
+	if coauthors == "" {
+		o.Log.Debug("no coauthors to add")
+		return cleanedB
 	}
-	return cleanedB
+
+	o.Log.Debug("found coauthors to add")
+	if commentPos := strings.Index(string(cleanedB), "# "); commentPos > -1 {
+		gitMessage := bytes.TrimSpace(cleanedB[0:commentPos])
+		gitComments := cleanedB[commentPos:]
+		o.Log.WithFields(log.Fields{
+			"message": string(gitMessage),
+			"comments": string(gitComments),
+			"coauthors": coauthors,
+		}).Debug("injecting coauthors")
+		return bytes.Join([][]byte{gitMessage, nl, nl, coauthorsB, nl, gitComments}, empty)
+	}
+	o.Log.WithFields(log.Fields{
+		"message": string(cleanedB),
+		"coauthors": coauthors,
+	}).Debug("appending coauthors")
+	return bytes.Join([][]byte{cleanedB, nl, nl, coauthorsB}, empty)
 }
 
 func main() {
 	//argsWithProg := os.Args
 	argsWithoutProg := os.Args[1:]
 
-	if len(argsWithoutProg) == 1 && argsWithoutProg[0] == "version" {
+	if len(argsWithoutProg) == 1 && strings.EqualFold(argsWithoutProg[0], "version") {
 		printVersion()
 		return
 	}
 
-	o := &PrepareCommitMsgOptions{}
-	err := o.Parse(argsWithoutProg)
-	if err != nil {
-		panic(err)
+	ctx := log.WithFields(log.Fields{
+		"app":         "go-prepare-commit-msg",
+		"app_version": Version,
+	})
+	o := NewOptions(ctx)
+
+	if o.LogFile != "" {
+		f, err := os.OpenFile(o.LogFile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+		if err != nil {
+			log.Fatalf("error opening file: %v", err)
+		}
+		defer f.Close()
+		log.SetHandler(text.New(f))
+	} else {
+		log.SetHandler(cli.New(os.Stdout))
+	}
+	log.SetLevel(o.LogMinimumLevel)
+
+	if err := o.Prepare(argsWithoutProg); err != nil {
+		log.WithError(err).Error("prepare options")
+		fmt.Printf("%#v\n", err)
+		os.Exit(1)
 	}
 
-	err = o.PrepareMessage()
-	if err != nil {
-		panic(err)
+	if err := o.Execute(); err != nil {
+		log.WithError(err).Error("executing")
+		fmt.Printf("%#v\n", err)
+		os.Exit(1)
 	}
 }
 
@@ -168,12 +232,6 @@ func printVersion(errs ...error) {
 	fmt.Printf("version: %s\n", Version)
 	for _, e := range errs {
 		fmt.Printf("- %v\n", e)
-	}
-}
-
-func debugf(format string, a ...interface{}) {
-	if getEnvOrDefaultBool("DEBUG", false) {
-		fmt.Printf(format, a...)
 	}
 }
 
