@@ -28,10 +28,14 @@ type PrepareCommitMsgOptions struct {
 	CommitSHA         string
 }
 
+var (
+	Version = "n/a"
+)
+
 func (o *PrepareCommitMsgOptions) Parse(args []string) error {
 	numArgs := len(args)
 	if !(2 <= numArgs && numArgs <= 3) {
-		return fmt.Errorf("expected 2 or 3 args, got %d: %v", numArgs, args)
+		return fmt.Errorf("expected 'version' or 2 args or 3 args, got %d: %v", numArgs, args)
 	}
 
 	o.CommitMessageFile = args[0]
@@ -141,6 +145,11 @@ func main() {
 	//argsWithProg := os.Args
 	argsWithoutProg := os.Args[1:]
 
+	if len(argsWithoutProg) == 1 && argsWithoutProg[0] == "version" {
+		printVersion()
+		return
+	}
+
 	o := &PrepareCommitMsgOptions{}
 	err := o.Parse(argsWithoutProg)
 	if err != nil {
@@ -154,6 +163,13 @@ func main() {
 }
 
 // -- helpers -------------------------
+
+func printVersion(errs ...error) {
+	fmt.Printf("version: %s\n", Version)
+	for _, e := range errs {
+		fmt.Printf("- %v\n", e)
+	}
+}
 
 func debugf(format string, a ...interface{}) {
 	if getEnvOrDefaultBool("DEBUG", false) {
