@@ -6,9 +6,13 @@ import (
 	"github.com/apex/log"
 	"github.com/apex/log/handlers/cli"
 	"github.com/apex/log/handlers/text"
+	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/config"
+	config2 "github.com/go-git/go-git/v5/plumbing/format/config"
 	"io/ioutil"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -16,6 +20,8 @@ import (
 
 var (
 	Version = "n/a"
+	empty = []byte("")
+	nl = []byte("\n")
 )
 
 /*
@@ -42,6 +48,7 @@ type PrepareCommitMsgOptions struct {
 	LogMinimumLevel            log.Level
 	LogFile                    string
 	Log                        *log.Entry
+	Repo                       *git.Repository
 }
 
 func NewOptions(logCtx *log.Entry) *PrepareCommitMsgOptions {
@@ -50,37 +57,65 @@ func NewOptions(logCtx *log.Entry) *PrepareCommitMsgOptions {
 	}
 
 	return &PrepareCommitMsgOptions{
+		CommitType: "commit",
 		Log: logCtx,
 		LogFile: getEnvOrDefaultString("GIT_COMMIT_MSG_LOG_FILE", fmt.Sprintf("%s.log", os.Args[0])),
 		LogMinimumLevel: log.MustParseLevel(getEnvOrDefaultString("GIT_COMMIT_MSG_LOG_LEVEL", "error")),
 	}
 }
 
-func (o *PrepareCommitMsgOptions) Prepare(args []string) error {
+func (o *PrepareCommitMsgOptions) Prepare(repo *git.Repository, args []string) error {
 	// parse positional args
 	numArgs := len(args)
-	if !(2 <= numArgs && numArgs <= 3) {
+	if !(1 <= numArgs && numArgs <= 3) {
 		return fmt.Errorf("expected 'version' or 2 args or 3 args, got %d: %v", numArgs, args)
 	}
 
 	o.CommitMessageFile = args[0]
-	o.CommitType = args[1]
+	if numArgs > 2 {
+		o.CommitType = args[1]
+	}
 
 	if numArgs > 2 {
 		o.CommitSHA = args[2]
 	}
 
 	// import config options from environment
-	o.PrefixWithBranch = getEnvOrDefaultBool("GIT_COMMIT_MSG_PREFIX_WITH_BRANCH_NAME", false)
-	o.PrefixWithBranchExclusions = getEnvOrDefaultStringSlice("GIT_COMMIT_MSG_PREFIX_WITH_BRANCH_NAME_EXCLUSIONS", "master", "main", "dev", "develop")
-	o.PrefixWithBranchTemplate = getEnvOrDefaultString("GIT_COMMIT_MSG_PREFIX_WITH_BRANCH_NAME_TEMPLATE", "[%s]")
+	if repo == nil {
+		checkError("prepare options", fmt.Errorf("not given a git repo"))
+	}
+	o.Repo = repo
+	repoConfig, err := repo.Config()
+	checkError("prepare options", err)
+
+	o.setDefaultOptions()
+	o.overrideFromEnv() // TODO: replace with global .gitonfig
+	o.overrideFromRepo(repoConfig) // HACK: for now, allow local repo config to override default config
 
 	o.Log = o.Log.WithFields(log.Fields{
 		"commit.type": o.CommitType,
-		"commit.sha": o.CommitSHA,
+		"commit.sha":  o.CommitSHA,
 	})
 
 	return nil
+}
+
+func (o *PrepareCommitMsgOptions) setDefaultOptions() {
+	o.PrefixWithBranch = false
+	o.PrefixWithBranchExclusions = []string{"master", "main", "dev", "develop"}
+	o.PrefixWithBranchTemplate = "[%s]"
+}
+
+func (o *PrepareCommitMsgOptions) overrideFromRepo(repoConfig *config.Config) {
+	o.PrefixWithBranch = getRepoConfigOptionOrDefaultBool(repoConfig, "go-githooks", "prepare-commit-message", "prefixWithBranch", o.PrefixWithBranch)
+	o.PrefixWithBranchExclusions = getRepoConfigOptionOrDefaultSlice(repoConfig, "go-githooks", "prepare-commit-message", "prefixBranchExclusions", o.PrefixWithBranchExclusions)
+	o.PrefixWithBranchTemplate = getRepoConfigOptionOrDefaultString(repoConfig, "go-githooks", "prepare-commit-message", "prefixWithBranchTemplate", o.PrefixWithBranchTemplate)
+}
+
+func (o *PrepareCommitMsgOptions) overrideFromEnv() {
+	o.PrefixWithBranch = getEnvOrDefaultBool("GIT_COMMIT_MSG_PREFIX_WITH_BRANCH_NAME", o.PrefixWithBranch)
+	o.PrefixWithBranchExclusions = getEnvOrDefaultStringSlice("GIT_COMMIT_MSG_PREFIX_WITH_BRANCH_NAME_EXCLUSIONS", o.PrefixWithBranchExclusions...)
+	o.PrefixWithBranchTemplate = getEnvOrDefaultString("GIT_COMMIT_MSG_PREFIX_WITH_BRANCH_NAME_TEMPLATE", o.PrefixWithBranchTemplate)
 }
 
 func (o *PrepareCommitMsgOptions) Execute() error {
@@ -147,7 +182,7 @@ func (o *PrepareCommitMsgOptions) prependBranchName(msg []byte, template string,
 
 	prefix := fmt.Sprintf(template, branch)
 	prefixB := []byte(prefix)
-	trimmedB := bytes.TrimSpace(msg)
+	trimmedB := bytes.Join([][]byte{bytes.TrimSpace(msg), nl, nl}, empty)
 	if !bytes.HasPrefix(trimmedB, prefixB) {
 		o.Log.WithFields(log.Fields{
 			"prefix": prefix,
@@ -158,15 +193,15 @@ func (o *PrepareCommitMsgOptions) prependBranchName(msg []byte, template string,
 }
 
 func (o *PrepareCommitMsgOptions) appendCoauthorMarkup(b []byte, coauthors string) []byte {
-	re := regexp.MustCompile(`(?im)^co-authored-by: [^>]+>`)
-	empty := []byte("")
-	nl := []byte("\n")
-	cleanedB := bytes.TrimSpace(re.ReplaceAll(b, empty))
-	coauthorsB := bytes.TrimSpace([]byte(coauthors))
+	o.Log.Debug("appending coauthor markup")
 	if coauthors == "" {
 		o.Log.Debug("no coauthors to add")
-		return cleanedB
+		return b
 	}
+
+	re := regexp.MustCompile(`(?im)^co-authored-by: [^>]+>`)
+	cleanedB := bytes.TrimSpace(re.ReplaceAll(b, empty))
+	coauthorsB := bytes.TrimSpace([]byte(coauthors))
 
 	o.Log.Debug("found coauthors to add")
 	if commentPos := strings.Index(string(cleanedB), "# "); commentPos > -1 {
@@ -215,20 +250,34 @@ func main() {
 		return
 	}
 
-	if err := o.Prepare(argsWithoutProg); err != nil {
-		log.WithError(err).Error("prepare options")
-		fmt.Printf("%#v\n", err)
-		os.Exit(1)
+	repoDir := getEnvOrDefaultString("PREPARE_COMMIT_MESSAGE_REPO_DIR", ".")
+	absDir, _ := filepath.Abs(repoDir)
+	fmt.Printf("opening git config @ '%s'\n", absDir)
+	repo, err := git.PlainOpen(absDir)
+	if err == git.ErrRepositoryNotExists {
+		err = fmt.Errorf("could not find repo at '%s' (resovled to: %s): %v", repoDir, absDir, err)
 	}
 
-	if err := o.Execute(); err != nil {
-		log.WithError(err).Error("executing")
-		fmt.Printf("%#v\n", err)
-		os.Exit(1)
-	}
+	checkError("read git repo", err)
+
+	err = o.Prepare(repo, argsWithoutProg)
+	checkError("prepare options", err)
+
+	err = o.Execute()
+	checkError("executing", err)
 }
 
 // -- helpers -------------------------
+
+func checkError(msg string, err error) {
+	if err == nil {
+		return
+	}
+
+	log.WithError(err).Error(msg)
+	fmt.Printf("%s: %#v\n", msg, err)
+	os.Exit(1)
+}
 
 func printVersion(errs ...error) {
 	fmt.Printf("version: %s\n", Version)
@@ -282,6 +331,48 @@ func getEnvOrDefaultStringSlice(envKey string, defaults ...string ) []string {
 		return strings.Split(v, ",")
 	}
 	return defaults
+}
+
+func getRepoConfigOptionOrDefaultString(c *config.Config, section, subsection, key, defaultValue string) string {
+	fmt.Printf("reading %s | %s | %s (default: %s)\n", section, subsection, key, defaultValue)
+	if !c.Raw.HasSection(section) {
+		return defaultValue
+	}
+
+	s := c.Raw.Section(section)
+	var o config2.Options
+	if subsection == "" {
+		o = s.Options
+	} else if s.HasSubsection(subsection) {
+		o = s.Subsection(subsection).Options
+	} else {
+		return defaultValue
+	}
+
+	if o.Has(key) {
+		return o.Get(key)
+	}
+	return defaultValue
+}
+
+func getRepoConfigOptionOrDefaultBool(c *config.Config, section, subsection, key string, defaultValue bool) bool {
+	v := getRepoConfigOptionOrDefaultString(c, section, subsection, key, "")
+	if v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			panic(fmt.Errorf("failed parsing '%s' as a bool: %v", v, err))
+		}
+		return b
+	}
+	return defaultValue
+}
+
+func getRepoConfigOptionOrDefaultSlice(c *config.Config, section, subsection, key string, defaultValues []string) []string {
+	v := getRepoConfigOptionOrDefaultString(c, section, subsection, key, "")
+	if v != "" {
+		return strings.Split(v, ",")
+	}
+	return defaultValues
 }
 
 func stringInSlice(s []string, v string) bool {
