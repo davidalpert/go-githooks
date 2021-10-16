@@ -1,0 +1,67 @@
+[
+  {
+    "Name": "go-githooks",
+    "Options": null,
+    "Subsections": [
+      {
+        "Name": "prepare-commit-message",
+        "Options": [
+          {
+            "Key": "prefixWithBranch",
+            "Value": "false"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "core",
+    "Options": null,
+    "Subsections": null
+  },
+  {
+    "Name": "user",
+    "Options": null,
+    "Subsections": null
+  },
+  {
+    "Name": "author",
+    "Options": null,
+    "Subsections": null
+  },
+  {
+    "Name": "committer",
+    "Options": null,
+    "Subsections": null
+  },
+  {
+    "Name": "init",
+    "Options": null,
+    "Subsections": null
+  },
+  {
+    "Name": "pack",
+    "Options": null,
+    "Subsections": null
+  },
+  {
+    "Name": "submodule",
+    "Options": null,
+    "Subsections": null
+  },
+  {
+    "Name": "branch",
+    "Options": null,
+    "Subsections": null
+  },
+  {
+    "Name": "url",
+    "Options": null,
+    "Subsections": null
+  },
+  {
+    "Name": "remote",
+    "Options": null,
+    "Subsections": null
+  }
+]
