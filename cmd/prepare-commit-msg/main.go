@@ -216,9 +216,15 @@ func main() {
 	argsWithoutProg := os.Args[1:]
 	numArgs := len(argsWithoutProg)
 
-	if numArgs == 1 && strings.EqualFold(argsWithoutProg[0], "version") {
-		printVersion()
-		return
+	if numArgs == 1 {
+		switch argsWithoutProg[0] {
+		case "version":
+			printVersion()
+			return
+		case "help":
+			printHelp()
+			return
+		}
 	}
 
 	repoDir := getEnvOrDefaultString("PREPARE_COMMIT_MESSAGE_REPO_DIR", ".")
@@ -259,4 +265,17 @@ func printVersion(errs ...error) {
 	for _, e := range errs {
 		fmt.Printf("- %v\n", e)
 	}
+}
+
+func printHelp() {
+	fmt.Printf("help: %s\n", Version)
+	fmt.Printf(`
+configure go-githooks per-repo in .git/config:
+
+[go-githooks "prepare-commit-message"]
+    prefixWithBranch = false
+    prefixWithBranchTemplate = [%%s]
+    prefixBranchExclusions = main,develop
+
+`)
 }
