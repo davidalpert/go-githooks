@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/config"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -71,7 +72,7 @@ func (o *PrepareCommitMsgOptions) Prepare(args []string) error {
 		o.CommitObject = args[2]
 	}
 
-	_, err := o.Repo.Config()
+	_, err := o.Repo.ConfigScoped(config.GlobalScope)
 	checkError("repoConfig", err)
 
 	o.setDefaultOptions()
@@ -83,7 +84,7 @@ func (o *PrepareCommitMsgOptions) Prepare(args []string) error {
 
 func (o *PrepareCommitMsgOptions) setDefaultOptions() {
 	o.PrefixWithBranch = false
-	o.PrefixWithBranchExclusions = []string{"master", "main", "dev", "develop"}
+	o.PrefixWithBranchExclusions = []string{"main", "develop"}
 	o.PrefixWithBranchTemplate = "[%s]"
 }
 
@@ -94,7 +95,7 @@ func (o *PrepareCommitMsgOptions) overrideFromEnv() {
 }
 
 func (o *PrepareCommitMsgOptions) overrideFromRepo() {
-	cfg, err := o.Repo.Config()
+	cfg, err := o.Repo.ConfigScoped(config.GlobalScope)
 	if err != nil {
 		return
 	}
