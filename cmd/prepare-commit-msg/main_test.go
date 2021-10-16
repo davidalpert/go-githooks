@@ -195,6 +195,23 @@ Co-authored-by: Mal Reynolds <mal@serentiy.com>
 Co-authored-by: Mal Reynolds <mal@serentiy.com>
 `,
 				},
+				{
+					name:       "no message no coauthors",
+					args:       ".git/COMMIT_MSG",
+					rawMessage: "",
+					branch:     "FEAT-4",
+					coauthors:  "",
+				},
+				{
+					name:       "no message no coauthors git comments",
+					args:       ".git/COMMIT_MSG",
+					rawMessage: `# git comments
+# git comments
+# git comments
+`,
+					branch:     "FEAT-5",
+					coauthors:  "",
+				},
 			},
 		},
 		{

@@ -14,6 +14,7 @@ import (
 var (
 	Version = "n/a"
 	empty = []byte("")
+	space = []byte(" ")
 	nl = []byte("\n")
 )
 
@@ -60,6 +61,8 @@ func (o *PrepareCommitMsgOptions) Prepare(args []string) error {
 		return fmt.Errorf("expected 'version' or 2 args or 3 args, got %d: %v", numArgs, args)
 	}
 
+	o.CommitMessageFile = args[0]
+
 	if len(args) > 1 {
 		o.Source = CommitMessageSourceFromString(args[1])
 	}
@@ -75,15 +78,6 @@ func (o *PrepareCommitMsgOptions) Prepare(args []string) error {
 	o.overrideFromEnv() // TODO: replace with global .gitonfig
 	o.overrideFromRepo() // HACK: for now, allow local repo config to override default config
 
-	return nil
-}
-
-func (o *PrepareCommitMsgOptions) readCommitMessageFromDisk() error {
-	msg, err := ioutil.ReadFile(o.CommitMessageFile)
-	if err != nil {
-		return fmt.Errorf("could not read '%s': %v", o.CommitMessageFile, err)
-	}
-	o.CommitMessageBytes = msg
 	return nil
 }
 
@@ -141,6 +135,13 @@ func (o *PrepareCommitMsgOptions) prependBranchName() error {
 
 	branchPrefix := strings.TrimSpace(fmt.Sprintf(o.PrefixWithBranchTemplate, branchName))
 	trimmedMsg := bytes.TrimSpace(o.CommitMessageBytes)
+	if bytes.HasPrefix(trimmedMsg, []byte("#")) {
+		// inject to separate git comments from the prefix
+		trimmedMsg = append(empty, bytes.Join([][]byte{ nl,
+			nl,
+			trimmedMsg,
+		},empty)...)
+	}
 	if !bytes.HasPrefix(trimmedMsg, []byte(branchPrefix)) {
 		updated = append(updated, bytes.Join([][]byte{
 			[]byte(fmt.Sprintf(o.PrefixWithBranchTemplate, branchName)), []byte(" "), trimmedMsg, nl,
@@ -175,8 +176,7 @@ func (o *PrepareCommitMsgOptions) appendCoauthorMarkup() error {
 			gitMessage, nl,
 			nl,
 			coauthorsB, nl,
-			nl,
-			gitComments,
+			nl, gitComments,
 		}, empty)...)
 	} else {
 		updated = append(updated, bytes.Join([][]byte{
@@ -189,6 +189,17 @@ func (o *PrepareCommitMsgOptions) appendCoauthorMarkup() error {
 	//fmt.Printf("udpated:\n---\n%s\n---\n", string(updated))
 	o.CommitMessageBytes = updated
 
+	return nil
+}
+
+func (o *PrepareCommitMsgOptions) readCommitMessageFromDisk() error {
+	msg, err := ioutil.ReadFile(o.CommitMessageFile)
+	if os.IsNotExist(err) {
+		msg = empty
+	} else if err != nil {
+		return fmt.Errorf("could not read '%s': %v", o.CommitMessageFile, err)
+	}
+	o.CommitMessageBytes = msg
 	return nil
 }
 
@@ -232,6 +243,10 @@ func main() {
 
 	err = o.Execute()
 	checkError("executing", err)
+
+	//o.CommitMessageBytes = append(o.CommitMessageBytes, bytes.Join([][]byte{
+	//	space, []byte("foo"), nl,
+	//}, empty)...)
 
 	err = os.WriteFile(o.CommitMessageFile, o.CommitMessageBytes, os.ModePerm)
 	if err != nil {

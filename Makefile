@@ -18,7 +18,7 @@ clean:
 .PHONY: build
 build:
 	mkdir -p bin/darwin
-	go build -ldflags="-X 'main.Version=${VERSION}'" -o bin/darwin/prepare-commit-msg-go-darwin cmd/prepare-commit-msg/main.go
+	go build -ldflags="-X 'main.Version=${VERSION}'" -o bin/darwin/prepare-commit-msg-go-darwin cmd/prepare-commit-msg/*.go
 
 ## rebuild: clean and build
 .PHONY: rebuild
@@ -27,7 +27,7 @@ rebuild: clean build
 ## test: run tests
 .PHONY: test
 test:
-	#go build -o ../mob-test/.git/hooks/prepare-commit-msg ./cmd/prepare-commit-msg/main.go
+	#go build -o ../mob-test/.git/hooks/prepare-commit-msg ./cmd/prepare-commit-msg/...
 	go test -v ./...
 
 ## deploy: deploy binaries
