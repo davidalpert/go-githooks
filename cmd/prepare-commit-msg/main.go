@@ -127,9 +127,21 @@ func (o *PrepareCommitMsgOptions) prependBranchName() error {
 		return err
 	}
 
+	//fmt.Printf("repo: %#v\n", o.Repo)
+	//fmt.Printf("head: %#v\n", head)
+	//fmt.Printf("name: %#v\n", head.Name())
+
 	branchName := head.Name().Short()
 	if branchName == "" {
 		return nil
+	} else if branchName == "HEAD" {
+		baseBranchName, err := resolveHeadDuringRebase()
+		if err != nil {
+			fmt.Printf("could not fine branch name: %v", err)
+			return nil
+		}
+
+		branchName = baseBranchName
 	}
 
 	updated := make([]byte, 0)
@@ -157,6 +169,21 @@ func (o *PrepareCommitMsgOptions) prependBranchName() error {
 	o.CommitMessageBytes = updated
 
 	return nil
+}
+
+func resolveHeadDuringRebase() (string, error) {
+	branchList, err := execAndCaptureOutput("list branches", "git", "branch", "--list")
+	if err != nil {
+		return "", err
+	}
+	// * (no branch, rebasing feature/super-awesome-4)
+	re := regexp.MustCompile("\\* \\(no branch, rebasing ([^)]+)\\)")
+	match := re.FindStringSubmatch(branchList)
+	if len(match) > 1 {
+		return match[1], nil
+	}
+
+	return "", fmt.Errorf("could not find the current branch")
 }
 
 func (o *PrepareCommitMsgOptions) appendCoauthorMarkup() error {
@@ -216,6 +243,7 @@ func (o *PrepareCommitMsgOptions) readCoauthorsMessage() error {
 func main() {
 	argsWithoutProg := os.Args[1:]
 	numArgs := len(argsWithoutProg)
+	//fmt.Printf("args: %#v\n", argsWithoutProg)
 
 	if numArgs == 1 {
 		switch argsWithoutProg[0] {
